@@ -26,7 +26,8 @@ var import_obsidian = require("obsidian");
 var DEFAULT_SETTINGS = {
   iconSize: 16,
   showInExplorer: true,
-  showInLinks: true
+  showInLinks: true,
+  iconAttributes: ["icon"]
 };
 var FrontmatterIconPlugin = class extends import_obsidian.Plugin {
   constructor() {
@@ -147,10 +148,17 @@ var FrontmatterIconPlugin = class extends import_obsidian.Plugin {
   getIconUrl(file) {
     var _a;
     const frontmatter = (_a = this.app.metadataCache.getFileCache(file)) == null ? void 0 : _a.frontmatter;
-    const iconValue = frontmatter == null ? void 0 : frontmatter.icon;
-    if (!iconValue)
+    if (!frontmatter)
       return null;
-    return this.resolveIconValue(String(iconValue).trim(), file);
+    for (const attr of this.settings.iconAttributes) {
+      const iconValue = frontmatter[attr];
+      if (iconValue) {
+        const url = this.resolveIconValue(String(iconValue).trim(), file);
+        if (url)
+          return url;
+      }
+    }
+    return null;
   }
   resolveIconValue(raw, source) {
     if (/^https?:\/\//.test(raw))
@@ -260,5 +268,51 @@ var FrontmatterIconSettingTab = class extends import_obsidian.PluginSettingTab {
         }
       })
     );
+    containerEl.createEl("h3", { text: "Frontmatter attribute names" });
+    containerEl.createEl("p", {
+      text: "The plugin checks these attributes in order and uses the first one that contains a value. Drag to reorder.",
+      cls: "setting-item-description"
+    });
+    const listEl = containerEl.createDiv("fmi-attr-list");
+    this.renderAttributeList(listEl);
+    new import_obsidian.Setting(containerEl).addButton(
+      (btn) => btn.setButtonText("Add attribute").setCta().onClick(async () => {
+        this.plugin.settings.iconAttributes.push("new-attribute");
+        await this.plugin.saveSettings();
+        this.renderAttributeList(listEl);
+      })
+    );
+  }
+  renderAttributeList(listEl) {
+    listEl.empty();
+    const attrs = this.plugin.settings.iconAttributes;
+    attrs.forEach((attr, index) => {
+      const row = listEl.createDiv("fmi-attr-row");
+      const input = row.createEl("input", {
+        type: "text",
+        value: attr,
+        cls: "fmi-attr-input"
+      });
+      input.addEventListener("change", async () => {
+        const val = input.value.trim();
+        if (val) {
+          this.plugin.settings.iconAttributes[index] = val;
+          await this.plugin.saveSettings();
+        }
+      });
+      const delBtn = row.createEl("button", {
+        text: "\xD7",
+        cls: "fmi-attr-delete"
+      });
+      delBtn.setAttribute("aria-label", "Remove attribute");
+      delBtn.addEventListener("click", async () => {
+        this.plugin.settings.iconAttributes.splice(index, 1);
+        if (this.plugin.settings.iconAttributes.length === 0) {
+          this.plugin.settings.iconAttributes.push("icon");
+        }
+        await this.plugin.saveSettings();
+        this.renderAttributeList(listEl);
+      });
+    });
   }
 };

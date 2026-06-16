@@ -11,12 +11,14 @@ interface FrontmatterIconSettings {
     iconSize: number;
     showInExplorer: boolean;
     showInLinks: boolean;
+    iconAttributes: string[];
 }
 
 const DEFAULT_SETTINGS: FrontmatterIconSettings = {
     iconSize: 16,
     showInExplorer: true,
     showInLinks: true,
+    iconAttributes: ["icon"],
 };
 
 export default class FrontmatterIconPlugin extends Plugin {
@@ -153,9 +155,16 @@ export default class FrontmatterIconPlugin extends Plugin {
     getIconUrl(file: TFile): string | null {
         const frontmatter =
             this.app.metadataCache.getFileCache(file)?.frontmatter;
-        const iconValue = frontmatter?.icon as string | undefined;
-        if (!iconValue) return null;
-        return this.resolveIconValue(String(iconValue).trim(), file);
+        if (!frontmatter) return null;
+
+        for (const attr of this.settings.iconAttributes) {
+            const iconValue = frontmatter[attr] as string | undefined;
+            if (iconValue) {
+                const url = this.resolveIconValue(String(iconValue).trim(), file);
+                if (url) return url;
+            }
+        }
+        return null;
     }
 
     private resolveIconValue(raw: string, source: TFile): string | null {
@@ -308,5 +317,63 @@ class FrontmatterIconSettingTab extends PluginSettingTab {
                         }
                     })
             );
+
+        // ── Attribute names ──────────────────────────────────────────────────
+
+        containerEl.createEl("h3", { text: "Frontmatter attribute names" });
+        containerEl.createEl("p", {
+            text: "The plugin checks these attributes in order and uses the first one that contains a value. Drag to reorder.",
+            cls: "setting-item-description",
+        });
+
+        const listEl = containerEl.createDiv("fmi-attr-list");
+        this.renderAttributeList(listEl);
+
+        new Setting(containerEl).addButton((btn) =>
+            btn
+                .setButtonText("Add attribute")
+                .setCta()
+                .onClick(async () => {
+                    this.plugin.settings.iconAttributes.push("new-attribute");
+                    await this.plugin.saveSettings();
+                    this.renderAttributeList(listEl);
+                })
+        );
+    }
+
+    private renderAttributeList(listEl: HTMLElement) {
+        listEl.empty();
+        const attrs = this.plugin.settings.iconAttributes;
+
+        attrs.forEach((attr, index) => {
+            const row = listEl.createDiv("fmi-attr-row");
+
+            const input = row.createEl("input", {
+                type: "text",
+                value: attr,
+                cls: "fmi-attr-input",
+            });
+            input.addEventListener("change", async () => {
+                const val = input.value.trim();
+                if (val) {
+                    this.plugin.settings.iconAttributes[index] = val;
+                    await this.plugin.saveSettings();
+                }
+            });
+
+            const delBtn = row.createEl("button", {
+                text: "×",
+                cls: "fmi-attr-delete",
+            });
+            delBtn.setAttribute("aria-label", "Remove attribute");
+            delBtn.addEventListener("click", async () => {
+                this.plugin.settings.iconAttributes.splice(index, 1);
+                if (this.plugin.settings.iconAttributes.length === 0) {
+                    this.plugin.settings.iconAttributes.push("icon");
+                }
+                await this.plugin.saveSettings();
+                this.renderAttributeList(listEl);
+            });
+        });
     }
 }
