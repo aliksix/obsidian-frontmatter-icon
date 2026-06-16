@@ -1,0 +1,23 @@
+.fmi-icon {
+    object-fit: contain;
+    vertical-align: middle;
+    border-radius: 2px;
+    flex-shrink: 0;
+    display: inline-block;
+}
+
+.fmi-explorer-icon {
+    margin-right: 4px;
+}
+
+.fmi-link-icon {
+    margin-right: 3px;
+    position: relative;
+    top: -1px;
+}
+
+/* Ensure file title row can hold the icon inline */
+.nav-file-title {
+    display: flex;
+    align-items: center;
+}
