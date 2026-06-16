@@ -33,13 +33,11 @@ var FrontmatterIconPlugin = class extends import_obsidian.Plugin {
   constructor() {
     super(...arguments);
     this.explorerObserver = null;
-    this.isRefreshing = false;
     this.refreshTimer = null;
   }
   async onload() {
     await this.loadSettings();
     this.addSettingTab(new FrontmatterIconSettingTab(this.app, this));
-    this.injectStyles();
     this.registerMarkdownPostProcessor((el, ctx) => {
       if (this.settings.showInLinks) {
         this.processLinks(el, ctx);
@@ -56,17 +54,23 @@ var FrontmatterIconPlugin = class extends import_obsidian.Plugin {
         if (this.settings.showInExplorer) {
           this.refreshExplorerItem(file);
         }
+        if (this.settings.showInLinks) {
+          this.refreshOpenLinksTo(file);
+        }
       })
     );
   }
   onunload() {
-    var _a, _b;
+    var _a;
+    if (this.refreshTimer)
+      clearTimeout(this.refreshTimer);
     (_a = this.explorerObserver) == null ? void 0 : _a.disconnect();
     document.querySelectorAll(".fmi-icon").forEach((el) => el.remove());
-    (_b = document.getElementById("fmi-styles")) == null ? void 0 : _b.remove();
   }
   // ── File Explorer ────────────────────────────────────────────────────────
   initExplorerObserver() {
+    if (this.explorerObserver)
+      return;
     const container = document.querySelector(".nav-files-container");
     if (!container)
       return;
@@ -88,30 +92,23 @@ var FrontmatterIconPlugin = class extends import_obsidian.Plugin {
     });
   }
   refreshExplorer() {
-    if (this.isRefreshing)
-      return;
-    this.isRefreshing = true;
-    try {
-      document.querySelectorAll(".nav-file-title[data-path]").forEach((titleEl) => {
-        const path = titleEl.dataset.path;
-        if (!path)
-          return;
-        const file = this.app.vault.getAbstractFileByPath(path);
-        if (file instanceof import_obsidian.TFile) {
-          this.applyExplorerIcon(titleEl, file);
-        }
-      });
-    } finally {
-      this.isRefreshing = false;
-    }
+    document.querySelectorAll(".nav-file-title[data-path]").forEach((titleEl) => {
+      const path = titleEl.dataset.path;
+      if (!path)
+        return;
+      const file = this.app.vault.getAbstractFileByPath(path);
+      if (file instanceof import_obsidian.TFile) {
+        this.applyExplorerIcon(titleEl, file);
+      }
+    });
   }
+  // Fix: avoid CSS selector injection — compare dataset.path directly
   refreshExplorerItem(file) {
-    const escaped = CSS.escape(file.path);
-    const titleEl = document.querySelector(
-      `.nav-file-title[data-path="${escaped}"]`
-    );
-    if (titleEl)
-      this.applyExplorerIcon(titleEl, file);
+    document.querySelectorAll(".nav-file-title[data-path]").forEach((titleEl) => {
+      if (titleEl.dataset.path === file.path) {
+        this.applyExplorerIcon(titleEl, file);
+      }
+    });
   }
   applyExplorerIcon(titleEl, file) {
     var _a;
@@ -142,6 +139,36 @@ var FrontmatterIconPlugin = class extends import_obsidian.Plugin {
       (_a = link.querySelector(".fmi-icon")) == null ? void 0 : _a.remove();
       const img = this.createIconImg(url, "fmi-link-icon");
       link.insertBefore(img, link.firstChild);
+    });
+  }
+  // Refresh link icons in all open reading views that link to the changed file
+  refreshOpenLinksTo(file) {
+    this.app.workspace.iterateAllLeaves((leaf) => {
+      if (!(leaf.view instanceof import_obsidian.MarkdownView))
+        return;
+      if (leaf.view.getMode() !== "preview")
+        return;
+      const contentEl = leaf.view.contentEl;
+      contentEl.querySelectorAll("a.internal-link[data-href]").forEach((link) => {
+        var _a, _b, _c;
+        const href = link.dataset.href;
+        if (!href)
+          return;
+        const target = this.app.metadataCache.getFirstLinkpathDest(
+          href,
+          (_b = (_a = leaf.view.file) == null ? void 0 : _a.path) != null ? _b : ""
+        );
+        if (!(target instanceof import_obsidian.TFile))
+          return;
+        if (target.path !== file.path)
+          return;
+        (_c = link.querySelector(".fmi-icon")) == null ? void 0 : _c.remove();
+        const url = this.getIconUrl(file);
+        if (!url)
+          return;
+        const img = this.createIconImg(url, "fmi-link-icon");
+        link.insertBefore(img, link.firstChild);
+      });
     });
   }
   // ── Icon Resolution ──────────────────────────────────────────────────────
@@ -197,31 +224,12 @@ var FrontmatterIconPlugin = class extends import_obsidian.Plugin {
     img.setAttribute("aria-hidden", "true");
     return img;
   }
-  injectStyles() {
-    if (document.getElementById("fmi-styles"))
-      return;
-    const style = document.createElement("style");
-    style.id = "fmi-styles";
-    style.textContent = `
-            .fmi-icon {
-                object-fit: contain;
-                vertical-align: middle;
-                border-radius: 2px;
-                flex-shrink: 0;
-                display: inline-block;
-            }
-            .fmi-explorer-icon { margin-right: 4px; }
-            .fmi-link-icon { margin-right: 3px; position: relative; top: -1px; }
-            .nav-file-title { display: flex; align-items: center; }
-        `;
-    document.head.appendChild(style);
-  }
   async loadSettings() {
-    this.settings = Object.assign(
-      {},
-      DEFAULT_SETTINGS,
-      await this.loadData()
-    );
+    const saved = await this.loadData();
+    this.settings = Object.assign({}, DEFAULT_SETTINGS, saved);
+    if (!Array.isArray(this.settings.iconAttributes) || this.settings.iconAttributes.length === 0) {
+      this.settings.iconAttributes = [...DEFAULT_SETTINGS.iconAttributes];
+    }
   }
   async saveSettings() {
     await this.saveData(this.settings);
@@ -253,6 +261,7 @@ var FrontmatterIconSettingTab = class extends import_obsidian.PluginSettingTab {
         if (!value) {
           document.querySelectorAll(".fmi-explorer-icon").forEach((el) => el.remove());
         } else {
+          this.plugin.initExplorerObserver();
           this.plugin.app.workspace.onLayoutReady(
             () => this.plugin.refreshExplorer()
           );
@@ -270,7 +279,7 @@ var FrontmatterIconSettingTab = class extends import_obsidian.PluginSettingTab {
     );
     containerEl.createEl("h3", { text: "Frontmatter attribute names" });
     containerEl.createEl("p", {
-      text: "The plugin checks these attributes in order and uses the first one that contains a value. Drag to reorder.",
+      text: "The plugin checks these attributes in order and uses the first one that contains a value.",
       cls: "setting-item-description"
     });
     const listEl = containerEl.createDiv("fmi-attr-list");
@@ -286,7 +295,7 @@ var FrontmatterIconSettingTab = class extends import_obsidian.PluginSettingTab {
   renderAttributeList(listEl) {
     listEl.empty();
     const attrs = this.plugin.settings.iconAttributes;
-    attrs.forEach((attr, index) => {
+    attrs.forEach((attr) => {
       const row = listEl.createDiv("fmi-attr-row");
       const input = row.createEl("input", {
         type: "text",
@@ -295,8 +304,12 @@ var FrontmatterIconSettingTab = class extends import_obsidian.PluginSettingTab {
       });
       input.addEventListener("change", async () => {
         const val = input.value.trim();
-        if (val) {
-          this.plugin.settings.iconAttributes[index] = val;
+        if (!val)
+          return;
+        const rows = Array.from(listEl.querySelectorAll(".fmi-attr-row"));
+        const i = rows.indexOf(row);
+        if (i !== -1 && i < this.plugin.settings.iconAttributes.length) {
+          this.plugin.settings.iconAttributes[i] = val;
           await this.plugin.saveSettings();
         }
       });
@@ -306,7 +319,11 @@ var FrontmatterIconSettingTab = class extends import_obsidian.PluginSettingTab {
       });
       delBtn.setAttribute("aria-label", "Remove attribute");
       delBtn.addEventListener("click", async () => {
-        this.plugin.settings.iconAttributes.splice(index, 1);
+        const rows = Array.from(listEl.querySelectorAll(".fmi-attr-row"));
+        const i = rows.indexOf(row);
+        if (i !== -1) {
+          this.plugin.settings.iconAttributes.splice(i, 1);
+        }
         if (this.plugin.settings.iconAttributes.length === 0) {
           this.plugin.settings.iconAttributes.push("icon");
         }
